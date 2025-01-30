@@ -1,3 +1,34 @@
-FROM image-registry.openshift-image-registry.svc:5000/openshift/jboss-webserver57-openjdk11-tomcat9-openshift-ubi8
+# Stage 1: Build the WAR file
+FROM registry.access.redhat.com/ubi8/openjdk-17 AS builder
 
-COPY target/*.war /deployments
+USER root
+
+WORKDIR /build
+
+
+# Optimize Maven build caching
+COPY pom.xml .
+RUN mvn dependency:go-offline
+
+COPY src ./src
+RUN mvn package -DskipTests
+
+# Stage 2: Create final runtime container with JWS (Tomcat)
+FROM registry.redhat.io/jboss-webserver-5/jws58-openjdk17-openshift-rhel8
+
+WORKDIR /opt/jboss/webserver/
+
+USER root
+
+# Security: Add a non-root user
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
+USER appuser
+
+# Copy built WAR file into Tomcat’s webapps directory
+COPY --from=builder /build/target/*.war ./webapps/app.war
+
+# Expose the Tomcat port
+EXPOSE 8080
+
+# Run JWS (Tomcat) with optimized settings
+CMD ["bin/catalina.sh", "run"]
